@@ -1,0 +1,312 @@
+;------------------------------------------------
+;
+; untitled
+; Atari VCS Game 
+; Created by JN on 2014-03-13.
+;
+; Copyright (c) 2014 __MyCompanyName__. All rights reserved.
+;
+; Use with joystick controllers
+;
+;------------------------------------------------
+	processor 	6502
+	include 	vcs.h
+	include 	macro.h
+
+;------------------------------------------------
+; Constants
+;------------------------------------------------
+BLACK = #$00
+
+PLAYERXMOTION = #$F0
+
+;------------------------------------------------
+; RAM
+;------------------------------------------------
+    SEG.U   variables
+    ORG     $80
+
+bgcolor		.byte
+frame		.byte
+
+player0ytop	.byte
+player0ybot	.byte
+player1ytop	.byte
+player1ybot	.byte
+ballytop	.byte
+ballybot	.byte
+scanline	.byte
+bulletvel	.byte
+
+playercolor	.byte
+p0grp		.byte
+p1grp		.byte
+
+buttonwait	.byte
+framecount	.byte
+
+;------------------------------------------------
+; Start of ROM
+;------------------------------------------------
+	SEG   Bank0
+	ORG   $F000       	; 4k ROM start point
+
+Start 
+	CLEAN_START			; Clear RAM and Registers
+	; set player x positions
+	sta WSYNC	; wait till start of line
+	sta RESP0	; reset sprite 0 position
+	SLEEP 30	; 20 cycle delay
+	sta RESBL	; reset ball position
+	SLEEP 11
+	sta RESP1	; reset sprite 1 position
+	
+	lda		#$FF
+	sta		AUDV0
+	sta		AUDV1
+	
+	; set up player graphics
+	lda		#$FF
+	sta		p0grp
+	sta		p1grp
+	sta		GRP0
+	sta		GRP1
+	lda		#$05
+	sta		NUSIZ0
+	sta		NUSIZ1
+	
+	; colors
+	lda		#$31
+	sta		bgcolor
+	eor		#$ff
+	sta		playercolor
+	
+	lda		p0grp
+	sta		GRP0
+	lda		p1grp
+	sta		GRP1
+	
+	; set playfield color
+	lda #$0f
+	sta COLUPF
+	; quadruple-wide ball
+	lda #$20
+	sta CTRLPF
+	
+	lda #$90
+	sta player0ytop
+	lda #$60
+	sta	player0ybot
+	lda #$60
+	sta player1ytop
+	lda #$30
+	sta	player1ybot
+	
+	lda #$60
+	sta ballybot
+	lda #$68
+	sta ballytop
+
+	; start velocity
+	lda #$fe
+	sta bulletvel
+
+	; framecount is used for skipping frames
+	lda #$00
+	sta framecount
+
+;------------------------------------------------
+; Vertical Blank
+;------------------------------------------------
+MainLoop
+	lda		#0
+	sta		VBLANK
+	VERTICAL_SYNC
+    lda     #43
+    sta     TIM64T
+
+	;***** Vertical Blank code goes here
+	lda		#0
+	sta		bgcolor
+	
+	; set player colors
+	lda		playercolor
+	sta		COLUP0
+	sta		COLUP1
+	
+	; set background color
+	lda		bgcolor
+	sta		COLUBK
+	
+	; ignore button press?
+	lda buttonwait
+	beq NoWaiting
+	dec buttonwait
+	jmp ButtonNotPressed
+NoWaiting
+	
+	; jump if button pressed
+	LDA INPT4		;read button input
+	BMI ButtonNotPressed	;skip if button not pressed
+	LDA bulletvel
+	adc #$10		; velocity change
+	sta bulletvel
+	lda #$08		; delay before next button press
+	sta buttonwait
+ButtonNotPressed
+
+	
+	; Set player motion
+	LDA #$10	; 1 in the left nibble, who cares in the right
+	sta 	HMP0
+	sta 	HMP1
+
+	; turn off ball at start of screen
+	lda #$00
+	sta ENABL
+	
+	; do horizontal motion
+	sta		WSYNC
+	sta 	HMOVE
+	
+	inc framecount
+	; skip every second frame
+	lda framecount
+	AND #$01
+	bne BallMovementDone
+	
+	; adjust ball velocity
+	lda bulletvel
+	cmp #$f8 ; maxvelocity
+	beq MaxSpeedReached
+	sbc #$01 ; increase downward velocity
+	sta bulletvel
+MaxSpeedReached
+
+	; ball movement
+	lda		ballytop
+	adc		bulletvel
+	sta		ballytop
+	adc		#$f8
+	sta		ballybot	
+BallMovementDone
+	
+	; reset scanline
+	lda		#$00
+	sta		scanline
+	
+.waitForVBlank
+	lda		INTIM
+	bne		.waitForVBlank
+	sta		WSYNC
+
+;------------------------------------------------
+; Kernel
+;------------------------------------------------	
+DrawScreen
+	ldx		#192+1		; Kernel goes here
+.scanline
+		lda		p0grp
+		sta		GRP0
+		lda		p1grp
+		sta		GRP1
+	
+		; determine whether or not to draw player 0
+		cpx		player0ytop
+		bne		DontTurnOffPlayer0
+		; turn off player 0
+		lda #$00
+		sta p0grp
+		jmp	DontTurnOnPlayer0
+			
+DontTurnOffPlayer0
+		cpx		player0ybot
+		bne		DontTurnOnPlayer0
+		; turn on player 0
+		lda #$ff
+		sta p0grp
+
+DontTurnOnPlayer0
+
+		; determine whether or not to draw player 1
+		cpx		player1ytop
+		bne		DontTurnOffPlayer1
+		; turn off player 0
+		lda #$00
+		sta p1grp
+		jmp	DontTurnOnPlayer1
+			
+DontTurnOffPlayer1
+		cpx		player1ybot
+		bne		DontTurnOnPlayer1
+		; turn on player 0
+		lda #$ff
+		sta p1grp
+
+DontTurnOnPlayer1
+
+	; determine whether or not to draw ball
+	;cpx	ballybot
+	;bcc DisableBall
+	;cpx ballytop
+	;bcs DisableBall
+EnableBall
+	;lda #$02
+	;jmp BallDone
+DisableBall
+	;lda #$00
+BallDone
+	;sta ENABL
+	
+	; start drawing ball?
+	cpx ballytop
+	bne NotBallTop
+	lda #$02
+	sta ENABL
+NotBallTop
+
+	; stop drawing ball?
+	cpx ballybot
+	bne NotBallBottom
+	lda #$00
+	sta ENABL
+NotBallBottom
+
+	;inc		bgcolor
+	dex
+	
+	
+	sta		WSYNC
+	bne		.scanline
+
+;------------------------------------------------
+; Overscan
+;------------------------------------------------
+	lda		#%01000010
+	sta		VBLANK
+    lda		#36
+    sta		TIM64T
+
+	;***** Overscan Code goes here
+
+.waitForOverscan
+	lda     INTIM
+	bne     .waitForOverscan
+
+	jmp		MainLoop
+
+;------------------------------------------------
+; ROM Tables
+;------------------------------------------------
+	;***** ROM tables go here
+
+;------------------------------------------------
+; Interrupt Vectors
+;------------------------------------------------
+	echo [*-$F000]d, " ROM bytes used"
+	ORG    $FFFA
+	.word  Start         ; NMI
+	.word  Start         ; RESET
+	.word  Start         ; IRQ
+    
+	END
